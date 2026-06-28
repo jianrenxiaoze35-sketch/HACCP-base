@@ -284,6 +284,7 @@
   <button class="tab-btn"        onclick="switchTab('search',this)"   >🔍 検索</button>
   <button class="tab-btn"        onclick="switchTab('haccp',this)"    >🎯 HACCP管理項目</button>
   <button class="tab-btn"        onclick="switchTab('links',this)"    >🔗 リンク集</button>
+  <button class="tab-btn"        onclick="switchTab('roadmap',this)"  >🚩 ロードマップ</button>
   <button class="tab-btn"        onclick="switchTab('settings',this)" >⚙️ 設定</button>
   <button class="tab-btn"        onclick="switchTab('debug',this)"    >🐛 デバッグ</button>
 </div>
@@ -546,6 +547,35 @@
         <button class="btn btn-outline btn-sm" onclick="closeLinkModal()">キャンセル</button>
         <button class="btn btn-primary btn-sm" onclick="saveLinkItem()">💾 保存</button>
       </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════ Tab: ロードマップ ══════════════════ -->
+<div id="tab-roadmap" class="tab-pane">
+
+  <div class="card">
+    <h2>🚩 ロードマップ</h2>
+    <p style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">
+      HACCP認証スケジュール（JFS-B：ブルワリー部門／JFSフードサービス：飲食部門）と、システム開発の今後の実装項目を統合管理します。
+    </p>
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-primary" onclick="loadRoadmap()">🔄 読み込む</button>
+      <select id="roadmap-filter-category" onchange="renderRoadmap()">
+        <option value="">大分類: すべて</option>
+        <option value="HACCP認証">HACCP認証</option>
+        <option value="システム開発">システム開発</option>
+      </select>
+      <select id="roadmap-filter-sub" onchange="renderRoadmap()">
+        <option value="">中分類: すべて</option>
+        <option value="ブルワリー部門">ブルワリー部門</option>
+        <option value="飲食部門">飲食部門</option>
+        <option value="システム">システム</option>
+      </select>
+    </div>
+    <div id="roadmap-result">
+      <p style="color:var(--muted)">「読み込む」を押してください。</p>
     </div>
   </div>
 
@@ -1398,6 +1428,75 @@ async function saveLinkItem() {
   } catch (e) {
     setHtml('link-modal-msg', `<span style="color:var(--danger)">エラー: ${e.message}</span>`);
   }
+}
+
+// ══════════════════ ロードマップ ══════════════════
+let _roadmapItems = [];
+
+async function loadRoadmap() {
+  loading('roadmap-result');
+  try {
+    const data = await api({ action: 'getRoadmap' });
+    if (!data.ok) { setHtml('roadmap-result', `<p style="color:var(--danger)">エラー: ${data.error || '不明'}</p>`); return; }
+    _roadmapItems = data.items || [];
+    renderRoadmap();
+  } catch (e) {
+    setHtml('roadmap-result', `<p style="color:var(--danger)">エラー: ${e.message}</p>`);
+  }
+}
+
+function renderRoadmap() {
+  if (!_roadmapItems.length) {
+    setHtml('roadmap-result', '<p style="color:var(--muted)">「読み込む」を押してください。</p>');
+    return;
+  }
+
+  const catFilter = document.getElementById('roadmap-filter-category').value;
+  const subFilter = document.getElementById('roadmap-filter-sub').value;
+  let items = _roadmapItems;
+  if (catFilter) items = items.filter(i => i.category === catFilter);
+  if (subFilter) items = items.filter(i => i.subCategory === subFilter);
+
+  if (!items.length) {
+    setHtml('roadmap-result', '<p style="color:var(--muted)">該当する項目がありません。</p>');
+    return;
+  }
+
+  const statusColor   = { '未着手': 'var(--muted)', '進行中': 'var(--primary)', '完了': 'var(--success)' };
+  const priorityColor = { '高': 'var(--danger)', '中': 'var(--warning)', '低': 'var(--muted)' };
+  const today = todayStr();
+
+  // 大分類 ｜ 中分類 でグループ化
+  const groups = {};
+  items.forEach(it => {
+    const key = `${it.category || '未分類'}｜${it.subCategory || '—'}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(it);
+  });
+
+  let html = `<p style="font-size:0.8rem;color:var(--muted);margin-bottom:10px">${items.length} 件</p>`;
+
+  Object.entries(groups).forEach(([key, list]) => {
+    html += `<div class="section-label">${key}</div>`;
+    list.forEach(it => {
+      const sc = statusColor[it.status] || 'var(--muted)';
+      const pc = priorityColor[it.priority] || 'var(--muted)';
+      const isOverdue = it.end && it.end < today && it.status !== '完了';
+      html += `<div style="background:var(--bg);border:1px solid var(--border);border-left:4px solid ${sc};border-radius:8px;padding:12px 14px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+          <strong style="font-size:0.88rem">${it.title || '(無題)'}</strong>
+          <span style="font-size:0.72rem;color:${sc};font-weight:700">${it.status || '—'}${isOverdue ? ' ⚠️遅延' : ''}</span>
+        </div>
+        <div style="font-size:0.78rem;color:var(--muted);margin-top:4px">
+          📅 ${it.start || '?'} 〜 ${it.end || '?'}　・　優先度: <span style="color:${pc};font-weight:700">${it.priority || '—'}</span>
+        </div>
+        ${it.comment ? `<div style="font-size:0.78rem;margin-top:6px">${it.comment}</div>` : ''}
+        ${it.url ? `<div style="margin-top:6px"><a href="${it.url}" target="_blank" style="font-size:0.75rem">🔗 Notionで見る</a></div>` : ''}
+      </div>`;
+    });
+  });
+
+  setHtml('roadmap-result', html);
 }
 
 // ─── 初期化 ───
