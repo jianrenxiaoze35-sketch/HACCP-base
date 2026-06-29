@@ -254,6 +254,26 @@
   .config-db-label { flex: 1; font-weight: 600; }
   .config-db-id    { color: var(--muted); font-size: 0.75rem; font-family: monospace; }
 
+  /* ─── ロードマップ：進捗バー・マイルストーン ─── */
+  .roadmap-progress-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .roadmap-progress-bar { flex:1; height:6px; border-radius:4px; background:var(--border); overflow:hidden; }
+  .roadmap-progress-bar > div { height:100%; background:var(--success); }
+  .roadmap-progress-label { font-size:0.72rem; color:var(--muted); white-space:nowrap; }
+  .roadmap-toggle-hint { font-size:0.74rem; color:var(--primary); margin-top:8px; cursor:pointer; }
+  .roadmap-milestones { margin-top:8px; border-top:1px dashed var(--border); padding-top:8px; display:none; }
+  .roadmap-milestones.open { display:block; }
+  .roadmap-ms-row { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:0.78rem; }
+  .roadmap-ms-row .dot { width:7px; height:7px; border-radius:50%; flex:0 0 auto; }
+  .roadmap-ms-row .dot.ms-未着手 { background:var(--muted); }
+  .roadmap-ms-row .dot.ms-進行中 { background:var(--primary); }
+  .roadmap-ms-row .dot.ms-完了   { background:var(--success); }
+  .roadmap-ms-row .ms-title { flex:1; }
+  .roadmap-ms-row .ms-title.ms-done { color:var(--muted); text-decoration:line-through; }
+  .roadmap-ms-badge { font-size:0.68rem; padding:1px 8px; border-radius:999px; white-space:nowrap; }
+  .roadmap-ms-badge.ms-未着手 { background:#eceef1; color:#6b7280; }
+  .roadmap-ms-badge.ms-進行中 { background:#dbeafe; color:#1d4ed8; }
+  .roadmap-ms-badge.ms-完了   { background:#d1fae5; color:#065f46; }
+
   /* ─── レスポンシブ ─── */
   @media (max-width: 600px) {
     .tab-btn    { font-size: 0.68rem; padding: 10px 6px; }
@@ -573,7 +593,14 @@
         <option value="飲食部門">飲食部門</option>
         <option value="システム">システム</option>
       </select>
+      <select id="roadmap-filter-status" onchange="renderRoadmap()">
+        <option value="">ステータス: すべて</option>
+        <option value="未着手">未着手</option>
+        <option value="進行中">進行中</option>
+        <option value="完了">完了</option>
+      </select>
     </div>
+    <div id="roadmap-summary" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
     <div id="roadmap-result">
       <p style="color:var(--muted)">「読み込む」を押してください。</p>
     </div>
@@ -1445,17 +1472,36 @@ async function loadRoadmap() {
   }
 }
 
+function toggleRoadmapMilestones(idx) {
+  const el = document.getElementById('roadmap-ms-' + idx);
+  if (el) el.classList.toggle('open');
+}
+
 function renderRoadmap() {
   if (!_roadmapItems.length) {
     setHtml('roadmap-result', '<p style="color:var(--muted)">「読み込む」を押してください。</p>');
+    setHtml('roadmap-summary', '');
     return;
   }
 
-  const catFilter = document.getElementById('roadmap-filter-category').value;
-  const subFilter = document.getElementById('roadmap-filter-sub').value;
+  const catFilter    = document.getElementById('roadmap-filter-category').value;
+  const subFilter    = document.getElementById('roadmap-filter-sub').value;
+  const statusFilter = document.getElementById('roadmap-filter-status').value;
   let items = _roadmapItems;
-  if (catFilter) items = items.filter(i => i.category === catFilter);
-  if (subFilter) items = items.filter(i => i.subCategory === subFilter);
+  if (catFilter)    items = items.filter(i => i.category === catFilter);
+  if (subFilter)    items = items.filter(i => i.subCategory === subFilter);
+  if (statusFilter) items = items.filter(i => i.status === statusFilter);
+
+  // ── サマリー（全項目の集計。フィルター前の _roadmapItems を母数にする） ──
+  const total = _roadmapItems.length;
+  const done  = _roadmapItems.filter(i => i.status === '完了').length;
+  const doing = _roadmapItems.filter(i => i.status === '進行中').length;
+  const todo  = total - done - doing;
+  const sumPill = (n, l) => `<div style="flex:1;min-width:100px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px">
+      <div style="font-size:1.1rem;font-weight:700">${n}</div>
+      <div style="font-size:0.7rem;color:var(--muted)">${l}</div>
+    </div>`;
+  setHtml('roadmap-summary', sumPill(total,'全項目') + sumPill(doing,'進行中') + sumPill(done,'完了') + sumPill(todo,'未着手'));
 
   if (!items.length) {
     setHtml('roadmap-result', '<p style="color:var(--muted)">該当する項目がありません。</p>');
@@ -1475,6 +1521,7 @@ function renderRoadmap() {
   });
 
   let html = `<p style="font-size:0.8rem;color:var(--muted);margin-bottom:10px">${items.length} 件</p>`;
+  let idx = 0;
 
   Object.entries(groups).forEach(([key, list]) => {
     html += `<div class="section-label">${key}</div>`;
@@ -1482,6 +1529,19 @@ function renderRoadmap() {
       const sc = statusColor[it.status] || 'var(--muted)';
       const pc = priorityColor[it.priority] || 'var(--muted)';
       const isOverdue = it.end && it.end < today && it.status !== '完了';
+      const prog = it.progress || { total: 0, done: 0, pct: 0 };
+      const milestones = it.milestones || [];
+      const thisIdx = idx++;
+
+      const msHtml = milestones.map(m => {
+        const mStatus = m.status || '未着手';
+        return `<div class="roadmap-ms-row">
+          <span class="dot ms-${mStatus}"></span>
+          <span class="ms-title${mStatus === '完了' ? ' ms-done' : ''}">${m.title || '(無題)'}</span>
+          <span class="roadmap-ms-badge ms-${mStatus}">${mStatus}</span>
+        </div>`;
+      }).join('');
+
       html += `<div style="background:var(--bg);border:1px solid var(--border);border-left:4px solid ${sc};border-radius:8px;padding:12px 14px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
           <strong style="font-size:0.88rem">${it.title || '(無題)'}</strong>
@@ -1491,6 +1551,14 @@ function renderRoadmap() {
           📅 ${it.start || '?'} 〜 ${it.end || '?'}　・　優先度: <span style="color:${pc};font-weight:700">${it.priority || '—'}</span>
         </div>
         ${it.comment ? `<div style="font-size:0.78rem;margin-top:6px">${it.comment}</div>` : ''}
+        ${prog.total > 0 ? `
+          <div class="roadmap-progress-row">
+            <div class="roadmap-progress-bar"><div style="width:${prog.pct}%"></div></div>
+            <div class="roadmap-progress-label">${prog.done}/${prog.total} 完了 (${prog.pct}%)</div>
+          </div>
+          <div class="roadmap-toggle-hint" onclick="toggleRoadmapMilestones(${thisIdx})">▼ マイルストーン・タスク（${prog.total}件）を表示/隠す</div>
+          <div class="roadmap-milestones" id="roadmap-ms-${thisIdx}">${msHtml}</div>
+        ` : ''}
         ${it.url ? `<div style="margin-top:6px"><a href="${it.url}" target="_blank" style="font-size:0.75rem">🔗 Notionで見る</a></div>` : ''}
       </div>`;
     });
